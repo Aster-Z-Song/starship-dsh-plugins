@@ -9,7 +9,10 @@
 查阅当前 DSH Plugin Manager 文档，确认支持 Git 与 tarball 地址。为两个插件各建立 install/ 安装分支，使插件清单位于分支根目录；main 保留双插件布局。新增发布说明，更新 README 的 URL 安装指引。不改动插件运行逻辑，不替换当前安装。
 
 ### 结果
-以远端分支哈希和独立目录的下载/安装检查为准；DSH 对原先错误子目录 spec 的请求在 GitHub 连接检查时超时，并未验证其格式。
+- 两个安装分支已发布并核对远端哈希；codeload 两个 URL 均返回 HTTP 200。
+- 在工作区独立目录用 DSH 同版本 pnpm 从两个 URL 安装成功（ignore-scripts），识别为 @local/dsh-context-map@1.0.0 和 @local/dsh-theme-orca@1.1.0。
+- 下载包的 bundle patch、Host/Client 入口、图标和中英文元数据均存在，两个 Host 模块均能由 Node 导入。
+- DSH 对原先子目录 spec 的请求在 GitHub 连接检查时超时，并未验证该格式；最终改用上述 tarball 安装入口。
 
 ### 遗留
 GitHub 网络与仓库权限会影响安装；匿名压缩包下载需要公开可访问的仓库。不声称已完成当前 DSH 的重新安装或页面验证。
