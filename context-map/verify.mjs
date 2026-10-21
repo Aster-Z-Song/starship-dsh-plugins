@@ -1,0 +1,47 @@
+import fs from 'node:fs';
+import assert from 'node:assert/strict';
+import {createProjection} from './projection.js';
+const pkg=JSON.parse(fs.readFileSync(new URL('package.json',import.meta.url),'utf8'));
+for(const file of ['index.js','projection.js','client.js','cordis.patch.yml','locale/en.json','locale/zh.json','icon.svg'])assert(fs.existsSync(new URL(file,import.meta.url)),file);
+for(const lang of ['en','zh']){const {meta}=JSON.parse(fs.readFileSync(new URL(`locale/${lang}.json`,import.meta.url),'utf8'));assert(meta.title&&meta.description);}
+const derive=e=>e.type==='user/message'?e.data:['system/message','developer/message','assistant/message','tool/result'].includes(e.type)?(e.data.message.content.length?e.data.message:null):null;
+const eligible=e=>['system/message','developer/message','user/message','assistant/message','tool/result'].includes(e.type)&&e.surfaceOp!==undefined;
+const estimate=m=>m.content.reduce((s,b)=>s+(b.type==='text'?b.text.length:20),4);
+const p=createProjection(estimate,derive,eligible);
+let state=p.init(),seq=0;
+const freeze=v=>{if(v&&typeof v==='object'){Object.freeze(v);Object.values(v).forEach(freeze);}return v;};
+function apply(type,data={},surfaceOp){freeze(state);state=p.apply(state,{type,data,seq:seq++,time:Date.now(),...(surfaceOp===undefined?{}:{surfaceOp})});p.stateSchema.parse(state);p.wire.viewSchema.parse(p.wire.view(state));return seq-1;}
+const text=(role,t)=>({role,content:[{type:'text',text:t}]});
+const header={config:{provider:'test',model:'example'},tools:[{name:'test',description:'secret schema body'}]};
+const sys=apply('system/message',{message:text('system','instructions')},'append');
+const usr=apply('user/message',text('user','first'),'append');
+apply('request/header',{header});
+apply('request/context',{contextWindow:128000});
+apply('step/start',{turn:1,step:1});
+const before=state.surface.reduce((n,x)=>n+x.segments.reduce((a,s)=>a+s.tokens,0),0)+state.header.toolTokens;
+const success=apply('assistant/message',{turn:1,step:1,message:text('assistant','new output must be excluded'),usage:{inputTokens:90}},'append');
+assert.equal(state.requests.length,1);assert.equal(state.requests[0].estimated,before);assert.equal(state.requests[0].usageInput,90);assert.equal(state.requests[0].status,'success');
+assert(!state.requests[0].segments.some(s=>s.seq===success));assert.equal(state.requests[0].contextWindow,128000);
+const first=JSON.stringify(state.requests[0]);
+apply('step/end',{turn:1,step:1});
+const result=apply('tool/result',{message:text('tool','tool returned payload')},'append');
+apply('step/start',{turn:1,step:2});
+apply('assistant/attempt',{turn:1,step:2});
+assert.equal(state.requests[1].status,'failed');assert(state.requests[1].segments.some(s=>s.seq===result&&s.kind==='tools'));
+const retryUser=apply('user/message',text('user','retry context'),'append');
+apply('assistant/message',{turn:1,step:2,message:text('assistant','second output')},'append');
+assert.equal(state.requests.length,3);assert.equal(state.requests[2].attempt,2);assert(state.requests[2].segments.some(s=>s.seq===retryUser));assert(state.requests[2].segments.some(s=>s.seq===sys));assert.equal(JSON.stringify(state.requests[0]),first);
+apply('step/end',{turn:1,step:2});
+const oldTail=state.surface.at(-1).seq;
+const memory=apply('user/message',{...text('user','summary'),source:{kind:'compact-checkpoint'}},{op:'replace',startSeq:usr,endSeq:oldTail});
+assert.deepEqual(state.surface.map(s=>s.seq),[sys,memory]);assert.equal(state.surface[1].segments[0].kind,'memory');
+apply('step/start',{turn:2,step:1});
+apply('assistant/message',{turn:2,step:1,message:text('assistant','out')},'append');
+const snap=state.requests.at(-1);assert.equal(snap.segments.filter(s=>s.seq===memory).length,1);assert(!snap.segments.some(s=>s.seq===usr));assert.equal(snap.estimated,snap.segments.reduce((n,s)=>n+s.tokens,0));
+assert(!JSON.stringify(state).includes('secret schema body'));assert(!JSON.stringify(state).includes('instructions'));
+const unchanged=state;apply('todo/write',{});assert.equal(state,unchanged);
+apply('step/end',{turn:2,step:1});
+assert.equal(p.wire.view(state).pending,false);
+for(let i=0;i<260;i++){apply('step/start',{turn:3,step:i});apply('assistant/attempt',{turn:3,step:i});apply('step/end',{turn:3,step:i});}
+assert.equal(state.requests.length,256);assert.equal(state.dropped,8);
+console.log(`${pkg.name}: manifest/resources and fold validation passed (cross-step, success, retries, compaction, immutable history, no content, capacity, bounded history).`);

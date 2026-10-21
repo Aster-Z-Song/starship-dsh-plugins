@@ -1,0 +1,4 @@
+- insert:
+  - id: local-orca-theme
+    name: '@local/dsh-theme-orca'
+    config: {}
