@@ -1,0 +1,4 @@
+- insert:
+    - id: local-context-map
+      name: '@local/dsh-context-map'
+      config: {}
